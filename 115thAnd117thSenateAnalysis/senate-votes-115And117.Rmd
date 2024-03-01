@@ -1,0 +1,528 @@
+---
+title: "The Senate's First Year of the 115th and 117th Congresses"
+author: "Matt Allen"
+date: "12/5/2021"
+categories: [multivariate, statistics]
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggrepel)
+library(ggthemes)
+
+#https://jeremyfelt.com/2020/06/03/publishing-to-wordpress-with-rstudio/
+#install.packages( "devtools" )
+#library(devtools)
+#devtools::install_github(c("josephguillaume/XMLRPC","duncantl/RWordPress"))
+
+
+# library('knitr')
+# library('devtools')
+# library('RWordPress')
+# library('XMLRPC')
+# options(WordpressURL = c("https://www.meallen.com/xmlrpc.php"))
+# options(WordpressLogin = c( "matt" = "B3Good@Today!" ))
+
+#type in console
+#knit2wp('senate-votes-115And117.Rmd', title='The Senate’s First Year of the 115th and 117th Congresses', publish = FALSE )
+
+
+# [1] "12"
+# attr(,"class")
+# [1] "WordpressPostId"
+# Warning messages:
+# 1: This function is based on the RWordPress package, which is no longer actively maintained (https://github.com/yihui/knitr/issues/1866). For blogging with R, you may try the blogdown package instead. 
+# 2: Removed 2 rows containing missing values (geom_point). 
+# 3: Removed 2 rows containing missing values (geom_text_repel). 
+# 4: ggrepel: 55 unlabeled data points (too many overlaps). Consider increasing max.overlaps 
+# 5: ggrepel: 55 unlabeled data points (too many overlaps). Consider increasing max.overlaps 
+# 6: ggrepel: 40 unlabeled data points (too many overlaps). Consider increasing max.overlaps 
+# 7: ggrepel: 40 unlabeled data points (too many overlaps). Consider increasing max.overlaps 
+
+
+#edit
+#knit2wp('senate-votes-115And117.Rmd', title='The Senate’s First Year of the 115th and 117th Congresses', action=c("editPost"), postid = 12, publish = FALSE )
+```
+
+## Description of Data
+
+The data for this report comes from Voteview.com. Voteview is the continuation of more than 40 years of work by Keith Poole. Over the years he has curated data related to the United States Congress. This data has been made freely available (Boche et al. 2018). 
+
+This paper will focus on the first year of the 115th and 117th Congresses (2017 and 2021 respectively). Specifically it will use the first year of roll call voting in the Senate. There are a range of votes that can be cast. For this analysis, it will be limited to Yea and Nay votes.
+
+The data is further filtered to Senators who have voted more than a threshold. The threshold is the average number of votes cast by all senators.
+
+```{r data, eval=FALSE, include=FALSE}
+#get data from voteview site. create smaller version based on 115th and 117th Congress.
+
+#117th Congress members
+hsall.members.117 <- read_csv("https://voteview.com/static/data/out/members/HSall_members.csv") %>% filter(congress == 117)
+write_csv(hsall.members.117, "HSall_members_117.csv")
+hsall.members.117 <- read_csv("HSall_members_117.csv")
+
+#115th Congress members
+hsall.members.115 <- read.csv("HSall_members.csv") %>% filter(congress == 115)
+write_csv(hsall.members.115, "HSall_members_115.csv")
+hsall.members.115 <- read_csv("HSall_members_115.csv")
+
+#117th Congress votes
+hsall.votes <- read_csv("https://voteview.com/static/data/out/votes/HSall_votes.csv")
+hsall.votes.117 <- hsall.votes %>% filter(congress == 117)
+write_csv(hsall.votes.117, "HSall_votes_117.csv")
+hsall.votes.117 <- read_csv("HSall_votes_117.csv")
+
+#115th Congress votes
+hsall.votes.115 <- read_csv("HSall_votes.csv") %>% filter(congress == 115)
+write_csv(hsall.votes.115, "HSall_votes_115.csv")
+hsall.votes.115 <- read_csv("HSall_votes_115.csv")
+
+#vote type lookup
+#https://voteview.com/articles/data_help_votes
+cast_code <-	c(0,1,2,3,4,5,6,7,8,9)
+Description <-	c("Not a member of the chamber when this vote was taken",	"Yea",	"Paired Yea",	"Announced Yea",	"Announced Nay",	"Paired Nay",	"Nay",	"Present (some Congresses)",	"Present (some Congresses)",	"Not Voting (Abstention)")
+cast.codes <- data.frame(cast_code = cast_code, Description = Description)
+
+
+#117th Congress parties
+hsall.parties.117 <- read_csv("https://voteview.com/static/data/out/parties/HSall_parties.csv") %>% filter(congress == 117)
+write_csv(hsall.parties.117, "HSall_parties_117.csv")
+hsall.parties.117 <- read_csv("HSall_parties_117.csv")
+
+#115th Congress parties
+hsall.parties.115 <- read_csv("HSall_parties.csv") %>% filter(congress == 115)
+write_csv(hsall.parties.115, "HSall_parties_115.csv")
+hsall.parties.115 <- read_csv("HSall_parties_115.csv")
+
+#make unique party table with chamber, party_code, party_name, and possibly members
+hsall.parties.117 <- hsall.parties.117 %>% 
+  select(party_code, party_name) %>%
+  distinct()
+
+#make unique party table with chamber, party_code, party_name, and possibly members
+hsall.parties.115 <- hsall.parties.115 %>% 
+  select(party_code, party_name) %>%
+  distinct()
+```
+
+## Methods
+
+Analysis of vote data with non-metric multidimensional scaling is described in Everitt and Hothorn (2011). In that analysis they use the R package MASS (Venables and Ripley 2002). The data set that is used in the text as input to isoMDS function from the MASS package is from Romesburg (1984). It is a symmetric square matrix of counts between pairs of Congress members. The counts represent the number of times a pair of representatives voted differently.  The main diagonal of the matrix contains zeros, because a member will never vote differently from themselves.
+
+For the current analysis, there were two major challenges. The first was to transform the Voteview data into a form that could be used with the isoMDS function in the MASS package. The Voteview data was joined to have member and party information connected to roll call votes. At the time of this analysis, the 117th Congress was in the first year of its session. All data from beginning to current was used. For the 115th Congress, data from the first vote to the same number of votes as were currently available in the 117th were used. The data was further filtered based on Senators who voted more than the average number of times of all members of the Senate. Also, only Yea or Nay votes were used. An R function was created that compared each Senator's votes to all other Senators' votes across all the votes. For each pair of Senators if they voted differently two cells of the symmetric matrix were updated by 1.
+
+Once a method to create the matrix was completed, the second challenge was off diagonal zeros. An off diagonal zero represents a pair of senators who whenever they were in the same roll call vote, voted the same way. This causes an error in the isoMDS function. There are two ways that this can be fixed. One is to add a small number like 1 in place of the zero. A second way is to remove one of the pairs of senators all together. The second way was chosen, because the end goal of this analysis is to show differences between Senators, so having two senators who have the same voting record does not add any information related to differences. Off diagonal zeros were found in the 117th Congress data. For each of the Senators with the same voting record, one of the pair of the cloned Senators was removed and the dissimilarity matrix was rebuilt.
+
+Finally, once the dissimilarity matrix was created, the matrix was used as input to the isoMDS function. The resulting distances obtained from non-metric multidimensional scaling were plotted to reveal patterns in voting records of Senators in the 115th and 117th Congresses.
+
+```{r eval=FALSE, include=FALSE}
+#join vote to member data to party data for 117th Congress
+vote.data.117 <- hsall.votes.117  %>% inner_join(cast.codes, by = "cast_code") %>%
+  inner_join(hsall.members.117, by = "icpsr") %>%
+  inner_join(hsall.parties.117, by = "party_code") %>%
+  select(congress = congress.x, icpsr, chamber = chamber.x, rollnumber, cast_code, prob, vote = Description, 
+         district_code, state_abbrev, party_code, bioname, born,
+         nominate_dim1, nominate_dim2, party_code, party_name)
+
+write_csv(vote.data.117, "vote_data_117.csv")
+```
+
+```{r eval=FALSE, include=FALSE}
+#join vote to member data to party data for 115th Congress
+vote.data.115 <- hsall.votes.115  %>% inner_join(cast.codes, by = "cast_code") %>%
+  inner_join(hsall.members.115, by = "icpsr") %>%
+  inner_join(hsall.parties.115, by = "party_code") %>%
+  select(congress = congress.x, icpsr, chamber = chamber.x, rollnumber, cast_code, prob, vote = Description, 
+         district_code, state_abbrev, party_code, bioname, born,
+         nominate_dim1, nominate_dim2, party_code, party_name)
+
+write_csv(vote.data.115, "vote_data_115.csv")
+```
+
+```{r include=FALSE}
+#Start here this has data created up to this point.
+vote.data.117 <- read_csv("vote_data_117.csv")
+```
+
+```{r include=FALSE}
+vote.data.115 <- read_csv("vote_data_115.csv") %>% filter(rollnumber < 475) 
+#do for first 475 votes to have similar number as 117th congress
+```
+
+```{r include=FALSE}
+#get all senate member names and party
+vote.data.117.senate <- vote.data.117 %>% 
+  filter(chamber == "Senate") %>%
+  filter(cast_code == 1 | cast_code == 6) #%>% # yea vote or nay vote
+```
+
+```{r include=FALSE}
+vote.data.115.senate <- vote.data.115 %>% 
+  filter(chamber == "Senate") %>%
+  filter(cast_code == 1 | cast_code == 6) #%>% # yea vote or nay vote
+```
+
+
+```{r include=FALSE}
+#check the number of votes to use as a minimum threshold 
+vote.data.117.senate.num.votes <- vote.data.117.senate %>%
+  count(icpsr)
+```
+
+```{r include=FALSE}
+#check the number of votes to use as a minimum threshold 
+vote.data.115.senate.num.votes <- vote.data.115.senate %>%
+  count(icpsr) 
+```
+
+
+```{r include=FALSE}
+vote.data.117.senate.num.votes <- vote.data.117.senate.num.votes %>%
+  filter(n > mean(vote.data.117.senate.num.votes$n))
+
+#reduce data to only votes with senators in vote.data.117.senate.num.votes 
+vote.data.117.senate <- vote.data.117.senate %>%
+  filter(icpsr %in% vote.data.117.senate.num.votes$icpsr)
+```
+
+```{r include=FALSE}
+vote.data.115.senate.num.votes <- vote.data.115.senate.num.votes %>%
+  filter(n > mean(vote.data.115.senate.num.votes$n))
+
+vote.data.115.senate <- vote.data.115.senate %>%
+  filter(icpsr %in% vote.data.115.senate.num.votes$icpsr)
+```
+
+
+```{r include=FALSE}
+getMemberData <- function(congress.vote.data) {
+  #get senate members details, unique id, name, year born, party name and state.
+  congress.vote.data %>%
+  select(icpsr, bioname, born, party_name, state_abbrev) %>%
+    distinct()
+}
+```
+
+```{r include=FALSE}
+#build a matrix of unique members symmetrical on rows and columns
+initializeDissimMatrix <- function(member.data) {
+  num.members <- nrow(member.data)
+  
+  #initialize dissimilarity matrix
+  vote.dissim <- matrix(0, nrow = num.members, ncol = num.members)
+  rownames(vote.dissim) <- member.data$icpsr
+  colnames(vote.dissim) <- member.data$icpsr
+  vote.dissim
+}
+```
+
+```{r include=FALSE}
+#get the ids of the votes
+getVotes <- function(congress.vote.data) {
+  votes <- congress.vote.data %>%
+    select(rollnumber) %>%
+    distinct()
+  votes$rollnumber
+}
+```
+
+```{r eval=FALSE, include=FALSE}
+buildDissimMatrix <- function(vote.dissim, congress.vote.data, votes) {
+  #build the dissimilarity matrix
+  #careful about running this. it takes a while.
+  for(v in votes) {
+    print(v)
+    current.vote <- congress.vote.data %>% filter(rollnumber == v)
+    
+    
+    for(self.id in current.vote$icpsr) {
+      self.vote <- current.vote %>% filter(icpsr == self.id)
+      self.vote <- self.vote$cast_code
+      
+      opposites <- current.vote %>% filter(cast_code != self.vote)
+      
+      #icpsr is already character in rownames and columns names.
+      
+      for(other.id in opposites$icpsr) {
+        vote.dissim[as.character(self.id),as.character(other.id)] <- vote.dissim[as.character(self.id),as.character(other.id)] + 1
+        vote.dissim[as.character(other.id),as.character(self.id)] <- vote.dissim[as.character(other.id),as.character(self.id)] + 1
+      }
+    
+    }
+  }
+  vote.dissim
+}
+```
+
+```{r include=FALSE}
+vote.data.117.senate.members <- getMemberData(vote.data.117.senate)
+```
+
+```{r eval=FALSE, include=FALSE}
+#build dissim matrix for 117th
+vote.dissim.senate.117 <- initializeDissimMatrix(vote.data.117.senate.members)
+votes <- getVotes(vote.data.117.senate)
+#don't run this line. can read instead
+vote.dissim.senate.117 <- buildDissimMatrix(vote.dissim.senate.117, vote.data.117.senate, votes)
+#find all zeros and then run again. make this into function.
+```
+
+```{r eval=FALSE, include=FALSE}
+#write out the disimilarity matrix so that do not have build every time.
+write.csv(vote.dissim.senate.117,"vote_dissim_senate_a.117.csv")
+```
+
+```{r include=FALSE}
+#use this elsewhere to read so do not have to run this again.
+#can read in one with zeros and the remove them and create a second one without zeros.
+vote.dissim.senate.117 <- as.matrix(read.csv("vote_dissim_senate_a.117.csv", row.names=1))
+colnames(vote.dissim.senate.117) <- row.names(vote.dissim.senate.117) #rename columns to be same as row names.
+```
+
+```{r include=FALSE}
+vote.data.115.senate.members <- getMemberData(vote.data.115.senate)
+```
+
+```{r eval=FALSE, include=FALSE}
+vote.dissim.senate.115 <- initializeDissimMatrix(vote.data.115.senate.members)
+votes <- getVotes(vote.data.115.senate)
+#don't run this line. can read instead if want to load faster.
+vote.dissim.senate.115 <- buildDissimMatrix(vote.dissim.senate.115, vote.data.115.senate, votes)
+```
+
+```{r eval=FALSE, include=FALSE}
+#write out the disimilarity matrix so that do not have build every time.
+write.csv(vote.dissim.senate.115,"vote_dissim_senate_a.115.csv")
+```
+
+```{r include=FALSE}
+vote.dissim.senate.115 <- as.matrix(read.csv("vote_dissim_senate_a.115.csv", row.names=1))
+colnames(vote.dissim.senate.115) <- row.names(vote.dissim.senate.115) #rename columns to be same as row names.
+```
+
+```{r include=FALSE}
+findTheClones <- function(dissim.matrix) {
+  #find the off diagnonal zeros. they need to be removed for isoMDS to work
+  #these senators are really just clones of each other.
+  #zeros can be interpreted as pairs of senators who vote the exact same way every time they participate in same vote.
+  m.cols <- colnames(dissim.matrix) #colnames(dissim.matrix)
+  m.rows <- colnames(dissim.matrix) #rownames(dissim.matrix)
+  
+  c.pair <- c()
+  r.pair <- c()
+  
+  i <- 1
+  numrows <- length(m.rows)
+  #how to scan lower triangle?
+  for(c in m.cols) {
+    
+    for(r in m.rows[i:numrows]) {
+      
+      if(c != r) {
+        
+        if(dissim.matrix[r,c] == 0) {
+          
+          r.pair <- append(r.pair, as.numeric(r))
+          c.pair <- append(c.pair, as.numeric(c))
+        }
+      }
+    }
+    i <- i + 1
+    if(i > numrows) {
+      break
+    }
+  }
+  
+  #every time two vote, these pairs vote the same.
+  clone.voters <-  data.frame(r.pair, c.pair)
+  #data frame with 0 columns and 0 rows
+  clone.voters
+}
+
+cloned.senators.117 <- findTheClones(vote.dissim.senate.117)
+#cloned.senators
+```
+
+```{r include=FALSE, eval=FALSE}
+cloned.senators.115 <- findTheClones(vote.dissim.senate.115)
+cloned.senators.115
+```
+
+```{r include=FALSE, eval=FALSE}
+#get list of cloned senators
+#join up clone with names to see who senators are that vote the same way.
+row.clones <- vote.data.117.senate.members %>% 
+  filter(icpsr %in% cloned.senators.117$r.pair)
+row.clones  
+
+col.clones <- vote.data.117.senate.members %>% 
+  filter(icpsr %in% cloned.senators.117$c.pair)
+col.clones  
+
+#all the cloned senators are democrats! this makes sense in 117th senate, because they are in power.
+
+#remove one side of the cloned senators from data
+
+#rebuild matrix. need to remove zeros for isoMDS to work. having senators that vote exactly same does not add information.
+```
+
+```{r include=FALSE}
+vote.data.117.senate <- vote.data.117.senate %>%
+  filter(!icpsr %in% cloned.senators.117$c.pair)
+
+#vote.data.117.senate.members
+vote.data.117.senate.members <- getMemberData(vote.data.117.senate)
+```
+
+```{r eval=FALSE, include=FALSE}
+dim(vote.data.117.senate.members)
+#remove 5 senators went from 90 to 85
+
+#rerun process with one size of cloned pairs removed.
+#this line can be skipped if read from file below
+vote.dissim.senate.117 <- initializeDissimMatrix(vote.data.117.senate.members)
+
+votes <- getVotes(vote.data.117.senate)
+
+#this line can be skipped if read from file below
+vote.dissim.senate.117 <- buildDissimMatrix(vote.dissim.senate.117, vote.data.117.senate, votes)
+#find all zeros and then run again. make this into function.
+```
+
+```{r include=FALSE, eval=FALSE}
+#write out no 0 matrix
+#write out the disimilarity matrix so that do not have build every time.
+write.csv(vote.dissim.senate.117,"vote_dissim_senate_no_zero_pair.csv")
+```
+
+```{r include=FALSE}
+#use this elsewhere to read so do not have to run this again.
+#can read in one with zeros and the remove them and create a second one without zeros.
+vote.dissim.senate.117 <- as.matrix(read.csv("vote_dissim_senate_no_zero_pair.csv", row.names=1))
+colnames(vote.dissim.senate.117) <- row.names(vote.dissim.senate.117) #rename columns to be same as row names.
+```
+
+```{r include=FALSE, eval=FALSE}
+#check again for zero pairs
+cloned.senators <- findTheClones(vote.dissim.senate.117)
+cloned.senators
+```
+
+```{r include=FALSE}
+library(MASS)
+voting_mds.117 <- isoMDS(vote.dissim.senate.117)
+
+x.117 <- voting_mds.117$points[,1]
+y.117 <- voting_mds.117$points[,2]
+```
+
+```{r include=FALSE}
+voting_mds.115 <- isoMDS(vote.dissim.senate.115)
+
+x.115 <- voting_mds.115$points[,1]
+y.115 <- voting_mds.115$points[,2]
+```
+
+## Results
+
+Non-metric multidimensional scaling was performed separately on data from the 115th and 117th Congresses, then Shepard diagrams were used to informally assess the quality of the multidimensional scaling (Everitt and Hothorn 2011). Figure 1 and 2 show Shepard diagrams from the two analyses. The Shepard diagram is a plot of the original dissimilarities against the distances obtained from multidimensional scaling. The points should lie along the bisecting line. These plots have some scatter outside of the line, but overall are good.
+
+```{r echo=FALSE, fig.cap="Figure 1. 115th Senate Distance vs Dissimilarity"}
+#Shepard Diagrams
+voting_sh.115 <- Shepard(vote.dissim.senate.115[lower.tri(vote.dissim.senate.115)], voting_mds.115$points)
+
+plot(voting_sh.115, main="Shepard Diagram 115th Senate", pch = ".", xlab = "Dissimilarity",
+ ylab = "Distance", xlim = range(voting_sh.115$x),
+ ylim = range(voting_sh.115$x))
+lines(voting_sh.115$x, voting_sh.115$yf, type = "S")
+```
+
+```{r echo=FALSE, fig.cap="Figure 2. 117th Senate Distance vs Dissimilarity"}
+#Shepard Diagrams
+voting_sh.117 <- Shepard(vote.dissim.senate.117[lower.tri(vote.dissim.senate.117)], voting_mds.117$points)
+
+#par(mfrow=c(2,1)) 
+plot(voting_sh.117, main="Shepard Diagram 117th Senate", pch = ".", xlab = "Dissimilarity",
+ ylab = "Distance", xlim = range(voting_sh.117$x),
+ ylim = range(voting_sh.117$x))
+lines(voting_sh.117$x, voting_sh.117$yf, type = "S")
+```
+
+```{r include=FALSE}
+disim.labels <- str_split(vote.data.117.senate.members$bioname,pattern = ",")
+last.names <- sapply(disim.labels, function(x) x[1])
+party <- substr(vote.data.117.senate.members$party_name,1,1)
+
+states <- vote.data.117.senate.members$state_abbrev
+#count the number of democrats and republicans
+#disim.labels <- trimws(paste(paste0("[",party, "]"), paste0("[",states, "]"), last.names, " "))
+disim.labels <- trimws(paste(paste0("[",states, "]"), last.names, " "))
+```
+
+```{r include=FALSE}
+disim.labels.115 <- str_split(vote.data.115.senate.members$bioname,pattern = ",")
+last.names.115 <- sapply(disim.labels.115, function(x) x[1])
+party.115 <- substr(vote.data.115.senate.members$party_name,1,1)
+
+states.115 <- vote.data.115.senate.members$state_abbrev
+#count the number of democrats and republicans
+#disim.labels.115 <- trimws(paste(paste0("[",party.115, "]"), paste0("[",states.115, "]"), last.names.115, " "))
+disim.labels.115 <- trimws(paste(paste0("[",states.115, "]"), last.names.115, " "))
+```
+
+## Conclusions
+
+The 115th and 117th Senate Sessions both had the party in control of the Senate also in control of the White House. In the 115th Congress, Republicans were in control and in the 117th Congress Democrats have control. Figure 3. and 4. show similar clustering, but on opposite sides of the political spectrum. When a party has control of the Senate, they tend to all vote together. This can be seen by the tight clustering of the party in power. The party not in power tends to be more dispersed. Interestingly, there are a few Senators from the party not in power that are willing to reach across the aisle. In the 115th Congress, Democratic Senators Heitkamp of North Dakota and Manchin of West Virginia tended to reach across the aisle. In the 117th Congress, Republican Senators Collins of Maine and Murkowski of Alaska tend to reach across the aisle. Three of the four Senators just mentioned also happen to be women.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figure 3. 115th Congress, Republicans Control Senate and White House"}
+#https://stackoverflow.com/questions/43770579/how-to-change-the-color-in-geom-point-or-lines-in-ggplot
+#https://stackoverflow.com/questions/37023083/how-to-increase-the-font-size-of-label-names
+
+set.seed(37)
+Party = vote.data.115.senate.members$party_name
+dat <- data.frame(x.115,y.115,Party)
+p <- ggplot(dat, aes(x.115, y.115, label = disim.labels.115)) + geom_point(aes(color = Party)) +
+  scale_color_manual(values = c("Democrat" = "blue", "Republican" = "red", "Independent"="green"))  +
+  xlim(-500,500) +
+  ylim(-100,150) +
+  xlab("Coordinate 1") + ylab("Coordinate 2")
+p2 <- p + geom_text_repel(max.overlaps=10, size = 2, fontface = "bold") + labs(title = "115th Senate Voting")
+p2 + theme_pander()
+
+#https://ggrepel.slowkow.com/articles/examples.html
+#gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figure 4. 117th Congress, Democrats Control Senate and White House"}
+#https://stackoverflow.com/questions/43770579/how-to-change-the-color-in-geom-point-or-lines-in-ggplot
+#https://stackoverflow.com/questions/37023083/how-to-increase-the-font-size-of-label-names
+
+set.seed(37)
+Party = vote.data.117.senate.members$party_name
+dat <- data.frame(x.117,y.117,Party)
+p <- ggplot(dat, aes(x.117, y.117, label = disim.labels)) + geom_point(aes(color = Party)) +
+  scale_color_manual(values = c("Democrat" = "blue", "Republican" = "red", "Independent"="green"))  +
+  xlim(-500,500) +
+  ylim(-100,150) +
+  xlab("Coordinate 1") + ylab("Coordinate 2")
+p2 <- p + geom_text_repel(max.overlaps=10, size = 2, fontface = "bold") + labs(title = "117th Senate Voting")
+p2 + theme_pander()
+
+#https://ggrepel.slowkow.com/articles/examples.html
+#gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+## References
+
+Boche, Adam, Jeffrey B. Lewis, Aaron Rudkin and Luke Sonnet. 2018. The new Voteview.com: preserving and continuing Keith Poole’s infrastructure for scholars, students and observers of Congress. Public Choice, Springer, vol. 176(1), pages 17-32, July. 
+
+Everitt, B. and T. Hothorn. 2011. An introduction to applied multivariate analysis with R. Springer, New York. 
+
+Venables, W. N. and B. D. Ripley. 2002. Modern Applied Statistics with S. Fourth Edition. Springer, New York.
+
+Romesburg, H.C. 1984. Cluster Analysis for Researchers. Lifetime Learning Publications, Belmont, CA.
+  
